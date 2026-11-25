@@ -15,7 +15,14 @@ STOPWORDS = {
     "em", "no", "na", "nos", "nas", "por", "para", "com", "sem", "e", "ou",
     "que", "qual", "quais", "como", "onde", "quando", "tem", "voces", "voce",
     "hoje", "esta", "estao", "sao", "ser", "ter", "valor", "preco", "quanto",
-    "custa", "aceitam", "abre", "funciona", "faco", "quero", "saber", "sobre"
+    "custa", "aceitam", "abre", "funciona", "faco", "quero", "saber", "sobre",
+    "dia", "semana", "tudo", "todos", "todas", "lista", "ver", "mostrar"
+}
+
+# Termos que indicam que o cliente quer ver o encarte completo de promoções
+GATILHOS_ENCARTE_COMPLETO = {
+    "promocao", "promocoes", "oferta", "ofertas", "encarte",
+    "desconto", "descontos", "barato", "baratos", "catalogo"
 }
 
 
@@ -42,7 +49,6 @@ def carregar_base_conhecimento(arquivos: list[str]) -> list[dict]:
         with open(nome_arquivo, "r", encoding="utf-8") as f:
             conteudo = f.read()
 
-        # Divide por linhas não vazias mantendo contexto de seção
         secao_atual = "Geral"
         for linha in conteudo.splitlines():
             linha_limpa = linha.strip()
@@ -62,18 +68,57 @@ def carregar_base_conhecimento(arquivos: list[str]) -> list[dict]:
     return blocos
 
 
+def listar_todas_ofertas(base: list[dict]) -> str:
+    """Retorna todas as ofertas cadastradas no encarte organizadas por seção."""
+    itens_encarte = [b for b in base if b["fonte"] == "encarte_ofertas_semana.txt"]
+
+    if not itens_encarte:
+        return "No momento não encontrei ofertas cadastradas no encarte da semana."
+
+    linhas = ["Confira todas as ofertas disponíveis hoje na Rede Bom Preço:\n"]
+    secao_anterior = None
+
+    for item in itens_encarte:
+        if item["secao"] != secao_anterior:
+            linhas.append(f"\n  {item['secao']}")
+            secao_anterior = item["secao"]
+        linhas.append(f"    • {item['texto']}")
+
+    linhas.append("\n[Fonte consultada: encarte_ofertas_semana.txt]")
+    return "\n".join(linhas)
+
+
+def exibir_sugestoes():
+    """Mostra exemplos de perguntas que o usuário pode fazer ao bot."""
+    print("💡 Exemplos do que você pode perguntar:")
+    print("  1. O que vocês têm em promoção hoje?")
+    print("  2. Qual o horário de funcionamento e endereço das lojas?")
+    print("  3. Quais formas de pagamento vocês aceitam? (Pix, VR/VA?)")
+    print("  4. Como funciona a política de troca de produtos?")
+    print("  5. Vocês fazem entrega / delivery?")
+    print("  (Digite 'ajuda' para ver esta lista novamente ou 'sair' para encerrar)\n")
+
+
 def buscar_resposta(pergunta: str, base: list[dict]) -> str:
     """Busca os trechos mais relevantes na base (simulando RAG) e monta a resposta."""
-    # Normaliza variações comuns de verbos para substantivos da base
-    pergunta_ajustada = normalizar_texto(pergunta).replace("trocar", "troca").replace("defeito", "avariado")
+    pergunta_ajustada = (
+        normalizar_texto(pergunta)
+        .replace("trocar", "troca")
+        .replace("defeito", "avariado")
+    )
     palavras_pergunta = extrair_palavras_chave(pergunta_ajustada)
 
     if not palavras_pergunta:
         return (
             "Não consegui identificar o que você procura. "
-            "Você pode perguntar sobre ofertas da semana, horários das lojas, "
-            "formas de pagamento ou política de trocas!"
+            "Digite 'ajuda' para ver exemplos de perguntas!"
         )
+
+    # Se o usuário perguntou de forma geral sobre promoções/ofertas, mostra o encarte inteiro
+    if palavras_pergunta.issubset(GATILHOS_ENCARTE_COMPLETO) or (
+        palavras_pergunta.intersection(GATILHOS_ENCARTE_COMPLETO) and len(palavras_pergunta) <= 2
+    ):
+        return listar_todas_ofertas(base)
 
     resultados = []
     for item in base:
@@ -86,17 +131,16 @@ def buscar_resposta(pergunta: str, base: list[dict]) -> str:
     if not resultados:
         return (
             "Desculpe, não encontrei essa informação nos nossos registros atuais.\n"
-            "Gostaria que eu transferisse seu atendimento para um atendente humano da loja?"
+            "Digite 'ajuda' para ver o que eu consigo responder ou peça para falar com um atendente."
         )
 
-    # Evita exibir linhas duplicadas no resultado final
     top_trechos = []
     textos_vistos = set()
     for score, item in resultados:
         if item["texto"] not in textos_vistos:
             top_trechos.append(item)
             textos_vistos.add(item["texto"])
-        if len(top_trechos) == 4:
+        if len(top_trechos) == 6:
             break
 
     linhas_resposta = ["Aqui está o que encontrei para você na Rede Bom Preço:\n"]
@@ -117,10 +161,9 @@ def buscar_resposta(pergunta: str, base: list[dict]) -> str:
 
 
 def iniciar_chat():
-    print("=" * 60)
+    print("=" * 64)
     print("  ASSISTENTE VIRTUAL - REDE DE SUPERMERCADOS BOM PREÇO")
-    print("  Digite sua dúvida ou 'sair' para encerrar o atendimento.")
-    print("=" * 60)
+    print("=" * 64)
 
     base = carregar_base_conhecimento(ARQUIVOS_BASE)
     if not base:
@@ -128,6 +171,7 @@ def iniciar_chat():
         return
 
     print(f"Base carregada com sucesso ({len(base)} registros indexados).\n")
+    exibir_sugestoes()
 
     while True:
         pergunta = input("Você: ").strip()
@@ -136,10 +180,14 @@ def iniciar_chat():
         if pergunta.lower() in {"sair", "exit", "encerrar"}:
             print("\nBot Bom Preço: Obrigado pelo contato! Boas compras!")
             break
+        if pergunta.lower() in {"ajuda", "menu", "opcoes", "opções"}:
+            print()
+            exibir_sugestoes()
+            continue
 
         resposta = buscar_resposta(pergunta, base)
         print(f"\nBot Bom Preço:\n{resposta}\n")
-        print("-" * 60)
+        print("-" * 64)
 
 
 if __name__ == "__main__":
